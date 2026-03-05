@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite the associated paper."
+title: "Asymmetric directional diffusion of skill requirements reproduces occupational stratification"
+authors:
+  - family-names: Cantillan
+    given-names: Roberto
+    affiliation: "Pontificia Universidad Católica de Chile"
+  - family-names: Bucca
+    given-names: Mauricio
+    affiliation: "Pontificia Universidad Católica de Chile"
+date-released: 2026-03-05
+license: MIT
+repository-code: "https://github.com/<your-org>/<your-repo>"
+preferred-citation:
+  type: article
+  title: "Asymmetric directional diffusion of skill requirements reproduces occupational stratification"
+  authors:
+    - family-names: Cantillan
+      given-names: Roberto
+    - family-names: Bucca
+      given-names: Mauricio
+  year: 2026
