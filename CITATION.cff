@@ -10,7 +10,7 @@ authors:
     affiliation: "Pontificia Universidad Católica de Chile"
 date-released: 2026-03-05
 license: MIT
-repository-code: "https://github.com/<your-org>/<your-repo>"
+repository-code: "https://github.com/rcantillan/skill_diffusion_paper"
 preferred-citation:
   type: article
   title: "Asymmetric directional diffusion of skill requirements reproduces occupational stratification"
