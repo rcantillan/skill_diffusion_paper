@@ -21,48 +21,54 @@ The study applies the Asymmetric Trajectory Channeling (ATC) framework to a tria
 ## Repository structure
 
 ```
-├── code/                           # All analysis scripts (run in order)
-│   ├── 00_setup.R                  # Packages, paths, shared functions
-│   ├── 01_build_data.R             # Construct triadic dataset
-│   ├── 02_baseline_models.R        # ATC baseline estimation (Panels A & B)
-│   ├── 03_robustness_tests.R       # Robustness battery (Tests i–v)
-│   ├── 04_nestedness.R             # NODF and c_s contributions
-│   ├── 05_structural_models.R      # Structural distance models
-│   ├── 06_subperiod_analysis.R     # Temporal stability (Table S2)
-│   ├── 07_figures_main.R           # All main-text figures (Figs. 1–4)
-│   ├── 08_figures_si.R             # All SI figures (Figs. S1–S7)
-│   ├── 09_tables.R                 # All tables (main + SI: Tables S1–S4)
-│   └── utils.R                     # Helper functions (extract_coefs, etc.)
+├── R/
+│   ├── 00_setup_comun.R              # Session setup: loads data, derives variables, draws sample
+│   ├── 00_build_dyads.R              # Construct triadic dataset (v12)
+│   ├── 00_build_events_v13_multithr.R # Multi-threshold dataset (v13, for RCA sensitivity)
+│   ├── utils.R                       # Shared helper functions (extract_coefs)
+│   ├── 99_paths_local.R.example      # Template for local path configuration
+│   │
+│   ├── main/                         # Main-text analyses and figures
+│   │   ├── 01_descriptives_flow_networks.R
+│   │   ├── 02_nestedness.R
+│   │   ├── 03_structural_models.R
+│   │   └── 04_structural_models_nestedness.R
+│   │
+│   └── SI/                           # Supplementary Information analyses
+│       ├── 01A_baseline_panelA.R     # Baseline Panel A (source + skill FE)
+│       ├── 01B_baseline_panelB.R     # Baseline Panel B (target + skill FE)
+│       ├── 03A_test_ii_panelA.R      # Domain-label permutation, Panel A
+│       ├── 03B_test_ii_panelB.R      # Domain-label permutation, Panel B
+│       ├── 04A_test_iii_panelA.R     # Within-stratum permutation, Panel A
+│       ├── 04B_test_iii_panelB.R     # Within-stratum permutation, Panel B
+│       ├── 05_tablas_y_figuras.R     # SI figures and tables (Tests i–iii)
+│       ├── 06_subsample_stability.R  # Subsample stability (Table S3)
+│       ├── 07_rca_threshold_sensitivity_FULL.R # RCA threshold sensitivity
+│       ├── 08_nestedness.R           # Nestedness computation (NODF, c_s)
+│       ├── 09_subperiod_analysis_table_S2.R # Temporal stability (Table S2)
+│       ├── 09b_print_table_S2.R      # Print Table S2 from cached results
+│       ├── 10_nestedness_NHB.R       # Alternative binarization robustness
+│       ├── S8_physical_HN_archetype.R # Physical_HN as separate archetype
+│       └── fig_S3_S4_skill_profiles.R # Skill-level directional profiles
 │
 ├── data/
-│   ├── raw/                        # Public source data (or download instructions)
-│   │   └── README.md               # O*NET and BLS access URLs and versions
-│   └── derived/                    # Derived analytical dataset
-│       └── README.md               # DOI, checksums, construction notes
+│   └── README.md                     # Data layout and archival instructions
 │
-├── output/
-│   ├── figures/
-│   │   ├── main/                   # Figs. 1–4 (main paper)
-│   │   └── si/                     # Figs. S1–S7 (Supplementary Information)
-│   ├── tables/
-│   │   ├── main/                   # Main-text tables
-│   │   └── si/                     # Tables S1–S4 (Supplementary Information)
-│   └── rds/                        # Cached intermediate objects
+├── output/                           # Generated outputs (gitignored except .gitkeep)
+│   └── output_SI_identity/           # SI figures, tables, and cached .rds
 │
-├── paper/
-│   ├── main.tex                    # Main manuscript source
-│   ├── si.tex                      # Supplementary Information source
-│   └── references.bib              # Bibliography
+├── images/                           # LaTeX-facing figure folder
+│   └── .gitkeep
 │
 ├── docs/
-│   ├── DATA_PROVENANCE.md          # Full data provenance documentation
-│   ├── SESSION_INFO.txt            # R session info from final run
-│   └── CODEBOOK.md                 # Variable descriptions for derived data
+│   ├── DATA_PROVENANCE.md            # Data sources and construction steps
+│   ├── PROJECT_STRUCTURE.md          # Directory layout documentation
+│   └── REPRODUCIBILITY_CHECKLIST.md  # Pre-submission checklist
 │
-├── Makefile                        # Build automation
-├── LICENSE                         # MIT License
-├── CITATION.cff                    # Citation metadata
-└── README.md                       # This file
+├── Makefile                          # Build automation (check, si_from_cache, sync)
+├── LICENSE                           # MIT License
+├── CITATION.cff                      # Citation metadata
+└── README.md                         # This file
 ```
 
 ---
@@ -73,16 +79,16 @@ The study applies the Asymmetric Trajectory Channeling (ATC) framework to a tria
 
 | Dataset | Version | Access |
 |---------|---------|--------|
-| O\*NET Database | Releases 20.3–29.2 (2015–2024) | [onetonline.org/help/onet/download](https://www.onetonline.org/help/onet/download) |
-| BLS OEWS | May 2015 national estimates | [bls.gov/oes/2015/may/oes_nat.htm](https://www.bls.gov/oes/2015/may/oes_nat.htm) |
+| O\*NET Database | Releases 20.3–29.2 (2015–2024) | [onetonline.org](https://www.onetonline.org/help/onet/download) |
+| BLS OEWS | May 2015 national estimates | [bls.gov](https://www.bls.gov/oes/2015/may/oes_nat.htm) |
 
 ### Derived data
 
-The triadic diffusion dataset (`dt_con_cs_nestedness.rds`, ~17.3M rows, ~2–4 GB) is archived at:
+The triadic diffusion dataset (`dt_con_cs_nestedness.rds`, ~17.3M rows, ~2–4 GB) will be archived at:
 
 > **[Zenodo/Dataverse/OSF]** — DOI: `[TO BE INSERTED]`
 
-Place the downloaded file in `data/derived/` before running the pipeline. See `data/derived/README.md` for SHA-256 checksums and construction details.
+Place the downloaded file in the repository root (or configure the path in `R/99_paths_local.R`). See `docs/DATA_PROVENANCE.md` for construction details.
 
 ---
 
@@ -106,57 +112,33 @@ install.packages(c(
 
 ## Reproducing the results
 
-### Option A: Full pipeline
+### Quick start (from cached outputs)
 
-Run all scripts in numbered order:
-
-```bash
-# From the repository root:
-Rscript code/00_setup.R
-Rscript code/01_build_data.R
-Rscript code/02_baseline_models.R
-Rscript code/03_robustness_tests.R
-Rscript code/04_nestedness.R
-Rscript code/05_structural_models.R
-Rscript code/06_subperiod_analysis.R
-Rscript code/07_figures_main.R
-Rscript code/08_figures_si.R
-Rscript code/09_tables.R
-```
-
-Or using Make:
+If you have the cached `.rds` objects in `output_SI_identity/rds/`:
 
 ```bash
-make all
+make si_from_cache   # Regenerate SI figures and tables
+make sync            # Copy figures to images/ for LaTeX
 ```
 
-### Option B: From cached outputs (no re-estimation)
+### Full pipeline
 
-If you have the cached `.rds` objects in `output/rds/`:
+The analysis scripts are designed to run one model per R session (due to memory constraints with ~17M rows). See `R/00_setup_comun.R` for the shared session setup.
 
+**Data construction:**
 ```bash
-Rscript code/07_figures_main.R
-Rscript code/08_figures_si.R
-Rscript code/09_tables.R
+Rscript R/00_build_dyads.R               # Build triadic dataset (v12)
+Rscript R/00_build_events_v13_multithr.R  # Build multi-threshold dataset (v13)
 ```
 
----
+**Main analyses** (in `R/main/`): run interactively after loading data.
 
-## Script descriptions
-
-| Script | Description | Outputs |
-|--------|-------------|---------|
-| `00_setup.R` | Loads packages, sets paths, sources `utils.R` | — |
-| `01_build_data.R` | Constructs the triadic risk set from O\*NET and BLS | `data/derived/dt_con_cs_nestedness.rds` |
-| `02_baseline_models.R` | Estimates ATC gravity model, Panels A and B | `output/rds/baseline_coefs.rds` |
-| `03_robustness_tests.R` | Runs Tests i–v: threshold placebo, domain permutation, within-stratum permutation, RCA sensitivity, subsample stability | `output/rds/test_*.rds` |
-| `04_nestedness.R` | Computes NODF and skill-level $c_s$ contributions | `output/rds/nestedness_cs.rds` |
-| `05_structural_models.R` | Estimates models with alternative distance measures | `output/rds/structural_*.rds` |
-| `06_subperiod_analysis.R` | Re-estimates ATC over three sub-periods (2015–18, 2019–21, 2022–24) | `output/rds/subperiod_*.rds`, `output/tables/si/table_S2.tex` |
-| `07_figures_main.R` | Generates Figures 1–4 (main text) | `output/figures/main/fig_01–04.*` |
-| `08_figures_si.R` | Generates Figures S1–S7 (SI) | `output/figures/si/fig_S1–S7.*` |
-| `09_tables.R` | Generates Tables S1–S4 (SI) | `output/tables/si/table_S1–S4.tex` |
-| `utils.R` | Shared helper functions (`extract_coefs()`, plotting themes) | (sourced by other scripts) |
+**SI analyses** (in `R/SI/`): run each script in a clean R session. Order:
+1. `01A` → `01B` (baseline Panels A & B)
+2. `03A` → `03B` (domain-label permutation)
+3. `04A` → `04B` (within-stratum permutation)
+4. `05_tablas_y_figuras.R` (generate all SI figures from cached results)
+5. `06` → `07` → `09` (subsample stability, RCA sensitivity, sub-periods)
 
 ---
 
@@ -166,24 +148,22 @@ Rscript code/09_tables.R
 
 | Figure/Table | Description | Script |
 |--------------|-------------|--------|
-| Figure 1 | Raw adoption rates by distance and wage gap | `07_figures_main.R` |
-| Figure 2 | Directional skill flows between wage quintiles | `07_figures_main.R` |
-| Figure 3 | ATC coefficients by skill domain | `07_figures_main.R` |
-| Figure 4 | Nestedness amplifies ATC | `07_figures_main.R` |
-| Table 1 | Domain–nestedness typology | (in manuscript) |
+| Figure 1 | Directional skill flow networks between wage quintiles | `R/main/01_descriptives_flow_networks.R` |
+| Figure 2 | ATC coefficients by skill domain | `R/main/03_structural_models.R` |
+| Figure 3 | Nestedness amplifies ATC | `R/main/04_structural_models_nestedness.R` |
 
 ### Supplementary Information
 
 | Figure/Table | Description | Script |
 |--------------|-------------|--------|
-| Fig. S1 | RCA threshold sensitivity | `08_figures_si.R` |
-| Fig. S2 | Distribution of $c_s$ by domain | `08_figures_si.R` |
-| Figs. S3–S4 | Skill-level directional profiles | `08_figures_si.R` |
-| Figs. S5–S7 | Robustness visualizations (Tests i–iii) | `08_figures_si.R` |
-| Table S1 | Full robustness battery | `09_tables.R` |
-| Table S2 | Temporal stability | `09_tables.R` |
-| Table S3 | Subsample stability | `09_tables.R` |
-| Table S4 | Physical\_HN as separate archetype | `09_tables.R` |
+| Fig. S1 | RCA threshold sensitivity | `R/SI/07_rca_threshold_sensitivity_FULL.R` |
+| Fig. S2 | Distribution of c_s by domain | `R/SI/08_nestedness.R` |
+| Figs. S3–S4 | Skill-level directional profiles | `R/SI/fig_S3_S4_skill_profiles.R` |
+| Figs. S5–S7 | Robustness visualizations (Tests i–iii) | `R/SI/05_tablas_y_figuras.R` |
+| Table S1 | Full robustness battery | `R/SI/05_tablas_y_figuras.R` |
+| Table S2 | Temporal stability | `R/SI/09_subperiod_analysis_table_S2.R` |
+| Table S3 | Subsample stability | `R/SI/06_subsample_stability.R` |
+| Table S4 | Physical_HN as separate archetype | `R/SI/S8_physical_HN_archetype.R` |
 
 ---
 
