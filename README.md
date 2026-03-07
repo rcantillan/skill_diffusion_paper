@@ -13,7 +13,7 @@
 
 This repository provides the data, code, and materials needed to replicate all analyses, figures, and tables in:
 
-> Cantillan, R. and Bucca, M. (2026). "Asymmetric directional diffusion of skill requirements reproduces occupational stratification." *Working paper.* arXiv: [XXXX.XXXXX](https://arxiv.org/abs/XXXX.XXXXX)
+> Cantillan, R. and Bucca, M. (2026). "Asymmetric directional diffusion of skill requirements reproduces occupational stratification." *Working paper.* arXiv: [2602.21369](https://arxiv.org/abs/2602.21369)
 
 The study applies the Asymmetric Trajectory Channeling (ATC) framework to a triadic dataset of 17.3 million skill-diffusion opportunities constructed from O\*NET (2015–2024) and BLS Occupational Employment and Wage Statistics (May 2015), covering 873 occupations and 161 skills.
 
