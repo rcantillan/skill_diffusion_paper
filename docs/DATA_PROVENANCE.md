@@ -40,4 +40,4 @@
 
 An earlier version of this paper is available as an arXiv preprint:
 
-- **arXiv:** [XXXX.XXXXX](https://arxiv.org/abs/XXXX.XXXXX)
+- **arXiv:** [2602.21369](https://arxiv.org/abs/2602.21369)
