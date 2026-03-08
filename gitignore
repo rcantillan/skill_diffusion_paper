@@ -1,0 +1,96 @@
+# ==============================================================================
+# .gitignore — skill_diffusion_paper
+# Rule: large data files stay local; result tables and figures are tracked.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# LARGE DERIVED DATA (never commit)
+# ------------------------------------------------------------------------------
+
+# Main triadic dataset
+dt_con_cs_nestedness.rds
+dt_con_cs_nestedness*.rds
+
+# Dyad construction outputs (v12, v13)
+datos_eventos_v12_FINAL/
+datos_eventos_v13_MULTITHR/
+
+# Any large .rds sitting at the repo root
+*.rds
+
+# Raw and derived data folders
+data/raw/
+data/derived/
+
+# Downloaded BLS / O*NET source files
+data/*.xlsx
+data/*.csv
+data/*.txt
+data/db_*/
+data/crosswalk/
+
+# ------------------------------------------------------------------------------
+# MODEL OBJECTS (large, regenerable from scripts)
+# Exception: result tables (.csv) and figures (.png / .pdf) ARE tracked
+# ------------------------------------------------------------------------------
+
+output/output_main/models/
+output/output_main/logs/
+output/output_SI_identity/models/
+output/output_SI_identity/logs/
+output/output_SI_identity/rds/
+output/output_rca_threshold/rds/
+output/subperiod_results/*.rds
+
+# Keep tracked: tables and figures
+!output/**/*.csv
+!output/**/*.png
+!output/**/*.pdf
+!output/**/.gitkeep
+
+# ------------------------------------------------------------------------------
+# LOCAL CONFIGURATION (machine-specific paths)
+# ------------------------------------------------------------------------------
+
+R/99_paths_local.R
+
+# ------------------------------------------------------------------------------
+# R ARTIFACTS
+# ------------------------------------------------------------------------------
+
+.Rhistory
+.RData
+.Rapp.history
+.Ruserdata
+*.Rproj.user/
+
+# renv library (restored via renv::restore())
+renv/library/
+renv/local/
+renv/cellar/
+renv/lock/
+renv/python/
+renv/sandbox/
+renv/staging/
+
+# ------------------------------------------------------------------------------
+# LaTeX BUILD ARTIFACTS
+# ------------------------------------------------------------------------------
+
+*.aux
+*.log
+*.out
+*.synctex.gz
+*.toc
+*.fls
+*.fdb_latexmk
+*.bbl
+*.blg
+
+# ------------------------------------------------------------------------------
+# OS ARTIFACTS
+# ------------------------------------------------------------------------------
+
+.DS_Store
+Thumbs.db
+desktop.ini
