@@ -42,10 +42,17 @@ dir.create(file.path(output_dir, "figs"),   showWarnings = FALSE, recursive = TR
 # ------------------------------------------------------------------------------
 # Load data
 # ------------------------------------------------------------------------------
-if (!exists("dt")) {
-  local_paths <- file.path("R", "99_paths_local.R")
-  if (file.exists(local_paths)) source(local_paths)
-  dt_path <- if (exists("PATH_TRIADIC")) PATH_TRIADIC else "dt_con_cs_nestedness.rds"
+# NOTE: "dt" is also a function in data.table. We bypass all name-lookup
+# ambiguity by (a) checking globalenv explicitly for a data.table object,
+# and (b) always using assign() / get() to read and write "dt".
+local_paths <- file.path("R", "99_paths_local.R")
+if (file.exists(local_paths)) source(local_paths)
+dt_path <- if (exists("PATH_TRIADIC")) PATH_TRIADIC else "dt_con_cs_nestedness.rds"
+
+.dt_ready <- exists("dt", envir = globalenv(), inherits = FALSE) &&
+             is.data.table(get("dt", envir = globalenv(), inherits = FALSE))
+
+if (!.dt_ready) {
   if (!file.exists(dt_path)) {
     stop(
       "Data file not found: ", dt_path,
@@ -53,9 +60,15 @@ if (!exists("dt")) {
     )
   }
   message("Loading triadic data from: ", dt_path)
-  dt <- readRDS(dt_path)
+  .raw <- readRDS(dt_path)
+  assign("dt", as.data.table(.raw), envir = globalenv())
+  rm(.raw)
+  message("Data loaded: ", format(nrow(get("dt", envir=globalenv())), big.mark=","), " rows")
 }
-setDT(dt)
+rm(.dt_ready)
+
+# Bind local symbol — safe now because globalenv has a true data.table
+dt <- get("dt", envir = globalenv())
 
 # ------------------------------------------------------------------------------
 # Keep only columns needed for estimation

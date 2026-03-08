@@ -26,7 +26,7 @@ PATH_TRIADIC <- "dt_con_cs_nestedness.rds"
 # Dyad construction outputs
 # Used by: R/00_build_dyads.R, R/00_build_events_v13_multithr.R
 # ------------------------------------------------------------------------------
-PATH_DYADS_V12  <- "datos_eventos_v12_FINAL/all_events_final_enriched_REAL.rds"
+PATH_DYADS_V12  <- "~/Documentos/skill_diffusion/datos_eventos_v12_FINAL/all_events_final_enriched_REAL.rds"
 PATH_DYADS_V13  <- "datos_eventos_v13_MULTITHR/all_events_v13_multithr.rds"
 
 # ------------------------------------------------------------------------------
