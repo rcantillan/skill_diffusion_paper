@@ -1,498 +1,378 @@
+# ==============================================================================
+# 04_structural_models_nestedness.R
+#
+# ATC archetype models — estimación sobre el dataset completo
+#
+# Tres arquetipos ATC basados en skill-complexity (cs) y dominio:
+#   SC_Specialized    (referencia): Cognitivo, cs < mediana(cs | Cognitivo)
+#   SC_Scaffolding:                 Cognitivo, cs >= mediana(cs | Cognitivo)
+#   Physical_Terminal:              Físico (todos)
+#
+# Fórmula (ambos paneles):
+#   diffusion ~ (wage_up + wage_down + up_dummy + structural_distance):atc_archetype
+#
+# Estrategia de RAM (igual que 03_structural_models.R):
+#   - Solo fixest + data.table + ggplot2, sin tidyverse
+#   - lean = TRUE + mem.clean = TRUE en todos los feglm
+#   - nthreads = 2 para limitar RAM paralela durante el demeaning iterativo
+#   - Secuencial: estimar → saveRDS → rm() → gc() → siguiente modelo
+#   - Coeficientes extraídos antes de borrar el objeto del modelo
+#
+# Outputs (output/output_main/):
+#   models/m_fe_source_nestedness.rds   Modelo Panel A (lean)
+#   models/m_fe_target_nestedness.rds   Modelo Panel B (lean)
+#   tables/coefs_nestedness.csv         Tabla de coeficientes (long format)
+#   figs/fig_main_atc_nestedness.pdf    Figura 2x3 arquetipos
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 0. Setup
+# ------------------------------------------------------------------------------
+gc()
 library(fixest)
+library(ggplot2)
 library(data.table)
-library(tidyverse)
+source("R/utils.R")   # extract_coefs_archetype()
 
+out_models <- file.path("output", "output_main", "models")
+out_tables <- file.path("output", "output_main", "tables")
+out_figs   <- file.path("output", "output_main", "figs")
+for (d in c(out_models, out_tables, out_figs))
+  dir.create(d, showWarnings = FALSE, recursive = TRUE)
 
-# ============================================================
-# 0) Mantener sólo lo necesario (incluye nestedness_cat)
-# ============================================================
-dt <- readRDS("dt_con_cs_nestedness.rds")
+# ------------------------------------------------------------------------------
+# 1. Cargar datos — dataset completo, columnas mínimas
+# ------------------------------------------------------------------------------
+if (file.exists("R/99_paths_local.R")) source("R/99_paths_local.R")
+dt_path <- if (exists("PATH_TRIADIC")) PATH_TRIADIC else "dt_con_cs_nestedness.rds"
+if (!file.exists(dt_path))
+  stop("Archivo de datos no encontrado: ", dt_path,
+       "\nConfigura PATH_TRIADIC en R/99_paths_local.R")
 
-# (si dt ya es data.table, esta parte igual funciona)
-dt <- dt[, .(diffusion, wage_gap, structural_distance,
-             domain, source, target, skill_name, cs)]
+message("Cargando datos desde: ", dt_path)
+dt_model <- readRDS(dt_path)
+if (!is.data.table(dt_model)) dt_model <- as.data.table(dt_model)
+gc()
 
-#dt <- dt_con_cs_nestedness; rm(dt_con_cs_nestedness)
-gc();gc();gc()
-setDT(dt)
+# Columnas necesarias — cs se necesita para atc_archetype, wage_gap para las
+# variables direccionales; ambos se eliminan en cuanto ya no hacen falta.
+needed <- c("diffusion", "wage_gap", "structural_distance",
+            "domain", "source", "target", "skill_name", "cs")
+drop   <- setdiff(names(dt_model), needed)
+if (length(drop)) dt_model[, (drop) := NULL]
+gc(); gc()
 
-# Asegurar tipos
-dt[, domain := factor(domain)]
-#dt[, nestedness_cat := factor(nestedness_cat)]   # levels: "Nested", "Un-nested" (según tu tabla)
+message(sprintf(
+  ">>> Dataset: %s filas | tasa de difusión: %.2f%%",
+  format(nrow(dt_model), big.mark = ","),
+  mean(dt_model$diffusion) * 100
+))
 
-# (opcional) fijar referencia
-# dt[, nestedness_cat := relevel(nestedness_cat, ref = "Nested")]
-# dt[, domain := relevel(domain, ref = "Cognitive")]
+# ------------------------------------------------------------------------------
+# 2. Construir arquetipo ATC (usa cs + domain) → eliminar cs
+# ------------------------------------------------------------------------------
+cs_threshold <- dt_model[domain == "Cognitive", median(cs, na.rm = TRUE)]
+message("Umbral cs (mediana Cognitivo) = ", round(cs_threshold, 4))
 
-# ============================================================
-# 1) Variables direccionales + dummy up
-# ============================================================
-dt[, wage_up   := pmax(0, wage_gap)]
-dt[, wage_down := pmin(0, wage_gap)]
-dt[, up_dummy  := fifelse(wage_gap > 0, 1L, 0L)]
-
-gc(); gc(); gc()
-
-
-# 1. Definir el umbral de 'Scaffolding' basado en el dominio Cognitivo
-# (Ya que en el Físico no hay masa crítica para esta categoría)
-cs_threshold <- dt[domain == "Cognitive", median(cs, na.rm = TRUE)]
-
-# 2. Crear la variable de Arquetipos ATC
-dt[, atc_archetype := fcase(
+dt_model[, atc_archetype := fcase(
   domain == "Cognitive" & cs >= cs_threshold, "SC_Scaffolding",
   domain == "Cognitive" & cs <  cs_threshold, "SC_Specialized",
-  domain == "Physical",                       "Physical_Terminal"
+  domain == "Physical",                        "Physical_Terminal"
+)]
+dt_model[, atc_archetype := factor(
+  atc_archetype,
+  levels = c("SC_Specialized", "SC_Scaffolding", "Physical_Terminal")
 )]
 
-# Convertir a factor y definir "SC_Specialized" como base para comparar 
-# contra el "techo" (Scaffolding) y el "suelo" (Physical)
-dt[, atc_archetype := factor(atc_archetype, 
-                             levels = c("SC_Specialized", "SC_Scaffolding", "Physical_Terminal"))]
+# cs ya no se necesita — liberarlo inmediatamente
+dt_model[, cs := NULL]
+gc()
 
-# ============================================================
-# MODELO 1: "RAW" (sin FE) pero con nestedness_cat
-#   Pendientes por (domain × nestedness_cat)
-# ============================================================
-m_raw_atc_nested <- feglm(
-  diffusion ~ 
-    # Interacción triple implícita: Gap * Arquetipo
-    (wage_up + wage_down + structural_distance) * atc_archetype, 
-  data = sample_frac(dt, .5),
-  family = binomial(link = "cloglog"),
-  cluster = c("source", "target", "skill_name"),
-  mem.clean = TRUE, lean = TRUE, nthreads = 0
+message("Distribución de arquetipos:")
+print(dt_model[, .N, keyby = atc_archetype])
+
+# ------------------------------------------------------------------------------
+# 3. Variables direccionales de salario (usa wage_gap) → eliminar wage_gap
+# ------------------------------------------------------------------------------
+D_BAR <- mean(dt_model$structural_distance, na.rm = TRUE)
+message("D_BAR = ", round(D_BAR, 4))
+
+dt_model[, wage_up   := pmax(0,  wage_gap)]
+dt_model[, wage_down := pmin(0,  wage_gap)]
+dt_model[, up_dummy  := fifelse(wage_gap > 0, 1L, 0L)]
+
+# wage_gap raw ya no se necesita — liberarlo
+dt_model[, wage_gap := NULL]
+gc(); gc()
+
+message(sprintf(
+  ">>> Datos listos para estimación: %s filas, %d columnas",
+  format(nrow(dt_model), big.mark = ","),
+  ncol(dt_model)
+))
+print(gc())
+
+# ==============================================================================
+# MODELOS — Se estiman de forma SECUENCIAL:
+#   Panel A → saveRDS → rm → gc → Panel B → saveRDS → rm → gc
+# Así nunca coexisten dos modelos grandes en RAM.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 4. Panel A — FE(source, skill_name)
+# ------------------------------------------------------------------------------
+message("\n>>> Panel A: feglm FE(source, skill_name) — dataset completo...")
+
+m_fe_source <- feglm(
+  diffusion ~ (wage_up + wage_down + up_dummy + structural_distance):atc_archetype,
+  data      = dt_model,
+  family    = binomial(link = "cloglog"),
+  fixef     = c("source", "skill_name"),
+  cluster   = c("source", "target", "skill_name"),
+  lean      = TRUE, mem.clean = TRUE, nthreads = 2
+)
+gc(); gc()
+summary(m_fe_source)
+
+saveRDS(m_fe_source, file.path(out_models, "m_fe_source_nestedness.rds"))
+message("  Guardado: models/m_fe_source_nestedness.rds")
+
+# Extraer coeficientes ANTES de borrar el modelo
+coefs_A <- extract_coefs_archetype(m_fe_source, "Panel A")
+
+rm(m_fe_source); gc(); gc()
+message("  Modelo Panel A eliminado de RAM.")
+
+# ------------------------------------------------------------------------------
+# 5. Panel B — FE(target, skill_name)
+# ------------------------------------------------------------------------------
+message("\n>>> Panel B: feglm FE(target, skill_name) — dataset completo...")
+
+m_fe_target <- feglm(
+  diffusion ~ (wage_up + wage_down + up_dummy + structural_distance):atc_archetype,
+  data      = dt_model,
+  family    = binomial(link = "cloglog"),
+  fixef     = c("target", "skill_name"),
+  cluster   = c("source", "target", "skill_name"),
+  lean      = TRUE, mem.clean = TRUE, nthreads = 2
+)
+gc(); gc()
+summary(m_fe_target)
+
+saveRDS(m_fe_target, file.path(out_models, "m_fe_target_nestedness.rds"))
+message("  Guardado: models/m_fe_target_nestedness.rds")
+
+coefs_B <- extract_coefs_archetype(m_fe_target, "Panel B")
+
+rm(m_fe_target); gc(); gc()
+message("  Modelo Panel B eliminado de RAM.")
+
+# Liberar datos — ya no hacen falta
+rm(dt_model); gc(); gc()
+message("  Datos eliminados de RAM.")
+
+# ------------------------------------------------------------------------------
+# 6. Tabla de coeficientes
+# ------------------------------------------------------------------------------
+message("\n>>> Tabla de coeficientes...")
+
+coefs <- rbind(coefs_A, coefs_B)
+print(coefs)
+
+fwrite(coefs, file.path(out_tables, "coefs_nestedness.csv"))
+message("  Guardado: tables/coefs_nestedness.csv")
+
+# ==============================================================================
+# 7. Figura — predictores lineales por arquetipo (2 x 3)
+#
+# Filas: Panel A / Panel B
+# Columnas: SC_Specialized | SC_Scaffolding | Physical_Terminal
+#
+# Science Advances specs:
+#   Ancho: 7.0 in (2-col); para 3 columnas se usa 10.5 in — confirmar con editor
+#   Alto:  8.5 in  |  Fuente: Helvetica  |  Formato: cairo_pdf
+# ==============================================================================
+message("\n>>> Construyendo figura de arquetipos...")
+
+# -- Paleta -------------------------------------------------------------------
+PAL <- c(
+  SC_Specialized    = "#2ABAB2",   # teal base — igual que Cognitive en 01/03
+  SC_Scaffolding    = "#1a7a77",   # teal oscuro — mismo matiz, más saturado
+  Physical_Terminal = "#CC4444"    # rojo — igual que Physical en 01/03
 )
 
-summary(m_raw_atc_nested)
-gc(); gc(); gc()
-
-# Crear la variable dummy de trayectoria ascendente
-#dt[, up_dummy := as.integer(wage_up > 0)]
-
-# Modelo con Salto Discreto (Interacción Triple)
-m_fe_source_jump <- feglm(
-  diffusion ~ 
-    (wage_up + wage_down + up_dummy + structural_distance) : atc_archetype, 
-  data = sample_frac(dt, .5),
-  family = binomial(link = "cloglog"),
-  fixef = c("source", "skill_name"),
-  cluster = c("source", "target", "skill_name"),
-  nthreads = 0
-)
-gc(); gc(); gc()
-summary(m_fe_source_jump)
-
-m_fe_target_jump <- feglm(
-  diffusion ~ 
-    (wage_up + wage_down + up_dummy + structural_distance) : atc_archetype, 
-  data = sample_frac(dt, .5),
-  family = binomial(link = "cloglog"),
-  fixef = c("target", "skill_name"),
-  cluster = c("source", "target", "skill_name"),
-  nthreads = 0
-)
-gc(); gc(); gc()
-summary(m_fe_target_jump)
-
-# ============================================================
-# ATC FIGURE — SINGLE MODEL (m_fe_source_nested)
-#   2 panels: domain
-#   Lines: Nested vs Un-nested (distinct colors) + LEGEND at bottom
-#   Text: includes Nested/Un-nested + betas, colored to match
-# ============================================================
-
-library(data.table)
-library(ggplot2)
-library(sysfonts)
-library(showtext)
-
-font_add_google("Inconsolata", "inconsolata")
-font_add_google("Noto Sans", "noto")
-showtext_auto(TRUE)
-
-theme_scd <- theme_minimal(base_size = 23) +
-  theme(
-    text = element_text(family = "inconsolata"),
-    strip.text = element_text(face = "bold", size = 22, margin = margin(b = 10)),
-    axis.title.x = element_text(size = 20, margin = margin(t = 18)),
-    axis.title.y = element_text(size = 20, margin = margin(r = 18)),
-    axis.text = element_text(size = 15),
-    
-    # legend abajo, simple
-    legend.position = "bottom",
-    legend.title = element_blank(),
-    legend.text = element_text(size = 16),
-    legend.margin = margin(t = 6, b = 0),
-    legend.box.margin = margin(t = 6),
-    
-    panel.grid.minor = element_blank(),
-    panel.spacing = unit(2.2, "lines"),
-    plot.margin = margin(18, 28, 18, 28),
-    panel.border = element_rect(color = "black", linewidth = 0.9, fill = NA),
-    panel.background = element_blank()
-  )
-
-stopifnot(exists("dt"), exists("m_fe_source_nested"))
-setDT(dt)
-
-# ----------------------------
-# Settings
-# ----------------------------
-xlim_use <- c(-2.2, 2.2)
-step_x   <- 0.01
-gap0     <- 0.16
-ylim_use <- c(-3.6, 2.0)
-
-domains <- c("Cognitive","Physical")
-nests   <- c("Nested","Un-nested")
-
-# two colors PER domain (so legend still works, but we need 4 actual hexes)
-# We'll map color to an auxiliary key group4, and create a *manual legend* using guides().
-cols4 <- c(
-  "Cognitive|Nested"    = "#1f3a63",
-  "Cognitive|Un-nested" = "#4f80c1",
-  "Physical|Nested"     = "#d7263d",
-  "Physical|Un-nested"  = "#ff7b89"
+ARCH_LABS <- c(
+  SC_Specialized    = "SC Specialized",
+  SC_Scaffolding    = "SC Scaffolding",
+  Physical_Terminal = "Physical Terminal"
 )
 
-# to build a legend that says Nested vs Un-nested, we use override.aes (two entries)
-# (see guides() below)
+PANEL_LABS <- c(
+  "Panel A" = "(A)  Source FE",
+  "Panel B" = "(B)  Target FE"
+)
 
-# ----------------------------
-# Dbar
-# ----------------------------
-Dbar <- mean(dt$structural_distance, na.rm = TRUE)
+# -- Constantes de diseño -----------------------------------------------------
+XLIM <- c(-2.2,  2.2)
+YLIM <- c(-4.2,  2.6)
+GAP0 <- 0.16
+STEP <- 0.01
 
-# ----------------------------
-# Robust coef extractor
-# ----------------------------
-get_coef <- function(model, term){
-  b <- coef(model)
-  if (term %in% names(b)) return(unname(b[[term]]))
-  parts <- strsplit(term, ":", fixed = TRUE)[[1]]
-  if(length(parts) >= 2){
-    for(i in seq_along(parts)){
-      for(j in seq_along(parts)){
-        if(i < j){
-          alt <- parts
-          tmp <- alt[i]; alt[i] <- alt[j]; alt[j] <- tmp
-          alt_term <- paste0(alt, collapse=":")
-          if (alt_term %in% names(b)) return(unname(b[[alt_term]]))
-        }
-      }
-    }
-  }
-  0
+mm_from_pt <- function(pt) pt * 0.352778
+PT_TICK <- 13; PT_TITLE <- 15; PT_STRIP <- 15; PT_ANNOT <- 12
+
+# -- Extractor de coeficientes ------------------------------------------------
+get_est <- function(coefs_dt, panel, arch, coef_name) {
+  v <- coefs_dt[panel_short == panel & archetype == arch & coef == coef_name,
+                estimate]
+  if (length(v) == 0 || is.na(v[1])) 0 else v[1]
 }
 
-make_key <- function(domain, nest) paste(domain, nest, sep="|")
+# -- Construir datos de la figura ---------------------------------------------
+archetypes   <- c("SC_Specialized", "SC_Scaffolding", "Physical_Terminal")
+panel_levels <- c("Panel A", "Panel B")
 
-extract_bygroup <- function(model, domains, nests){
-  out <- list(b_up=list(), b_down=list(), b_dummy=list(), b_D=list())
-  for(d in domains){
-    for(n in nests){
-      k <- make_key(d,n)
-      out$b_up[[k]]    <- get_coef(model, paste0("wage_up:domain", d, ":nestedness_cat", n))
-      out$b_down[[k]]  <- get_coef(model, paste0("wage_down:domain", d, ":nestedness_cat", n))
-      out$b_dummy[[k]] <- get_coef(model, paste0("up_dummy:domain", d, ":nestedness_cat", n))
-      out$b_D[[k]]     <- get_coef(model, paste0("structural_distance:domain", d, ":nestedness_cat", n))
-    }
-  }
-  out
-}
+build_panel <- function(coefs_dt, panel_label) {
+  x_left  <- seq(XLIM[1], -GAP0, by = STEP)
+  x_right <- seq(GAP0,  XLIM[2], by = STEP)
 
-bb <- extract_bygroup(m_fe_source_nested, domains, nests)
+  lines <- rbindlist(lapply(archetypes, function(arch) {
+    b_up <- get_est(coefs_dt, panel_label, arch, "Theta_up")
+    b_dn <- get_est(coefs_dt, panel_label, arch, "Theta_dn")
+    b_k  <- get_est(coefs_dt, panel_label, arch, "kappa")
+    b_d  <- get_est(coefs_dt, panel_label, arch, "delta")
 
-# ----------------------------
-# Build piecewise segments + jump
-# ----------------------------
-x_left  <- seq(xlim_use[1], -gap0, by = step_x)
-x_right <- seq(gap0, xlim_use[2],  by = step_x)
+    left  <- data.table(panel = panel_label, archetype = arch, side = "L",
+                        x = x_left)
+    left[,  y := b_dn * x + b_d * D_BAR]
 
-make_seg <- function(domain, nest, x, bb){
-  k <- make_key(domain, nest)
-  out <- data.table(domain = domain, nestedness_cat = nest, wage_gap = x)
-  out[, group4 := paste(domain, nestedness_cat, sep="|")]
-  out[, `:=`(
-    wage_up   = pmax(0, wage_gap),
-    wage_down = pmin(0, wage_gap),
-    up_dummy  = as.integer(wage_gap > 0)
-  )]
-  out[, y :=
-        bb$b_up[[k]]    * wage_up +
-        bb$b_down[[k]]  * wage_down +
-        bb$b_dummy[[k]] * up_dummy +
-        bb$b_D[[k]]     * Dbar
-  ]
-  out
-}
+    right <- data.table(panel = panel_label, archetype = arch, side = "R",
+                        x = x_right)
+    right[, y := b_up * x + b_k + b_d * D_BAR]
 
-jump_at_zero <- function(domain, nest, bb){
-  k <- make_key(domain, nest)
-  y0m <- bb$b_D[[k]] * Dbar
-  y0p <- bb$b_D[[k]] * Dbar + bb$b_dummy[[k]]
-  data.table(domain = domain, nestedness_cat = nest,
-             group4 = paste(domain, nest, sep="|"),
-             x = 0, y0m = y0m, y0p = y0p)
-}
+    rbind(left, right)
+  }))
 
-line_left <- rbindlist(lapply(domains, function(d){
-  rbindlist(lapply(nests, function(n) make_seg(d, n, x_left, bb)))
-}))
-line_right <- rbindlist(lapply(domains, function(d){
-  rbindlist(lapply(nests, function(n) make_seg(d, n, x_right, bb)))
-}))
-jump_dt <- rbindlist(lapply(domains, function(d){
-  rbindlist(lapply(nests, function(n) jump_at_zero(d, n, bb)))
-}))
+  jumps <- rbindlist(lapply(archetypes, function(arch) {
+    b_k <- get_est(coefs_dt, panel_label, arch, "kappa")
+    b_d <- get_est(coefs_dt, panel_label, arch, "delta")
+    data.table(panel = panel_label, archetype = arch,
+               x = 0, ymin = b_d * D_BAR, ymax = b_d * D_BAR + b_k)
+  }))
 
-line_left[,  domain := factor(domain, levels = domains)]
-line_right[, domain := factor(domain, levels = domains)]
-jump_dt[,    domain := factor(domain, levels = domains)]
-
-# ----------------------------
-# Labels: include Nested/Un-nested + betas, colored to match line
-# ----------------------------
-labs <- rbindlist(lapply(domains, function(d){
-  rbindlist(lapply(nests, function(n){
-    k <- make_key(d,n)
+  annots <- rbindlist(lapply(archetypes, function(arch) {
     data.table(
-      domain = d,
-      nestedness_cat = n,
-      group4 = paste(d, n, sep="|"),
-      beta_up = bb$b_up[[k]],
-      beta_down = bb$b_down[[k]]
+      panel     = panel_label,
+      archetype = arch,
+      label = sprintf(
+        "\u03b2\u2191 = %+.3f\n\u03b2\u2193 = %+.3f\n\u03ba = %+.3f",
+        get_est(coefs_dt, panel_label, arch, "Theta_up"),
+        get_est(coefs_dt, panel_label, arch, "Theta_dn"),
+        get_est(coefs_dt, panel_label, arch, "kappa")
+      ),
+      x = XLIM[1] + 0.12,
+      y = YLIM[1] + 0.10
     )
   }))
-}))
-labs[, domain := factor(domain, levels = domains)]
 
-labs[, xL := xlim_use[1] + 0.20]
-labs[, yB := ylim_use[1] + fifelse(nestedness_cat == "Nested", 0.25, 0.95)]
+  list(lines = lines, jumps = jumps, annots = annots)
+}
 
-labs[, lab_block := sprintf("%s\nβ_up = %+.3f\nβ_down = %+.3f",
-                            nestedness_cat, beta_up, beta_down)]
+pa <- build_panel(coefs, "Panel A")
+pb <- build_panel(coefs, "Panel B")
 
-# ----------------------------
-# Plot
-# ----------------------------
-p <- ggplot() +
+all_lines  <- rbind(pa$lines,  pb$lines)
+all_jumps  <- rbind(pa$jumps,  pb$jumps)
+all_annots <- rbind(pa$annots, pb$annots)
+
+all_lines[,  panel := factor(panel, levels = panel_levels)]
+all_lines[,  archetype := factor(archetype, levels = archetypes)]
+all_jumps[,  panel := factor(panel, levels = panel_levels)]
+all_jumps[,  archetype := factor(archetype, levels = archetypes)]
+all_annots[, panel := factor(panel, levels = panel_levels)]
+all_annots[, archetype := factor(archetype, levels = archetypes)]
+
+# -- Tema SciAdv --------------------------------------------------------------
+theme_sciadv <- theme_classic(base_size = PT_TICK, base_family = "Helvetica") +
+  theme(
+    strip.text        = element_text(size = PT_STRIP, face = "plain",
+                                     margin = margin(b = 4, t = 4)),
+    strip.background  = element_blank(),
+    axis.title.x      = element_text(size = PT_TITLE, margin = margin(t = 5)),
+    axis.title.y      = element_text(size = PT_TITLE, margin = margin(r = 5)),
+    axis.text         = element_text(size = PT_TICK),
+    axis.ticks        = element_line(linewidth = 0.3, colour = "grey30"),
+    axis.ticks.length = unit(2, "pt"),
+    panel.grid        = element_blank(),
+    panel.border      = element_rect(colour = "grey30", linewidth = 0.4,
+                                     fill = NA),
+    panel.background  = element_rect(fill = "white", colour = NA),
+    panel.spacing.x   = unit(6, "pt"),
+    panel.spacing.y   = unit(8, "pt"),
+    plot.margin       = margin(t = 6, r = 8, b = 6, l = 6, unit = "pt"),
+    legend.position   = "none"
+  )
+
+# -- Plot ---------------------------------------------------------------------
+fig_nest <- ggplot() +
+
   geom_line(
-    data = line_left,
-    aes(x = wage_gap, y = y, color = group4,
-        group = interaction(domain, nestedness_cat)),
-    linewidth = 3.2,
-    lineend = "butt"
+    data = all_lines,
+    aes(x = x, y = y, colour = archetype,
+        group = interaction(panel, archetype, side)),
+    linewidth = 1.2, lineend = "butt"
   ) +
-  geom_line(
-    data = line_right,
-    aes(x = wage_gap, y = y, color = group4,
-        group = interaction(domain, nestedness_cat)),
-    linewidth = 3.2,
-    lineend = "butt"
-  ) +
+
   geom_segment(
-    data = jump_dt,
-    aes(x = x, xend = x, y = y0m, yend = y0p, group = group4),
-    linewidth = 2.1,
-    color = "black"
+    data = all_jumps,
+    aes(x = x, xend = x, y = ymin, yend = ymax, colour = archetype),
+    linewidth = 0.7
   ) +
-  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.8) +
-  geom_hline(yintercept = 0, linetype = "dotted", linewidth = 0.65) +
-  facet_grid(. ~ domain) +
-  scale_color_manual(
-    values = cols4,
-    # manual legend labels (we will override aesthetics to show just 2 legend entries)
-    breaks = c("Cognitive|Nested","Cognitive|Un-nested"),
-    labels = c("Nested","Un-nested")
-  ) +
-  guides(
-    color = guide_legend(
-      override.aes = list(
-        # show a clean legend with two lines
-        linewidth = c(3.2, 3.2),
-        linetype  = c("solid","solid"),
-        color     = c(cols4["Cognitive|Nested"], cols4["Cognitive|Un-nested"])
-      )
-    )
-  ) +
-  coord_cartesian(xlim = xlim_use, ylim = ylim_use, clip = "off") +
+
+  geom_vline(xintercept = 0, linetype = "dotted",
+             linewidth = 0.25, colour = "grey70") +
+  geom_hline(yintercept = 0, linetype = "dotted",
+             linewidth = 0.25, colour = "grey70") +
+
   geom_text(
-    data = labs,
-    aes(x = xL, y = yB, label = lab_block, color = group4),
-    family = "noto",
-    size = 4.6,
-    hjust = 0, vjust = 0,
-    lineheight = 1.05
+    data = all_annots,
+    aes(x = x, y = y, label = label),
+    family = "Helvetica", size = mm_from_pt(PT_ANNOT),
+    hjust = 0, vjust = 0, lineheight = 1.15, colour = "grey20"
   ) +
+
+  facet_grid(
+    panel ~ archetype,
+    labeller = labeller(archetype = ARCH_LABS, panel = PANEL_LABS)
+  ) +
+
+  scale_colour_manual(values = PAL) +
+
+  scale_x_continuous(
+    breaks = seq(-2, 2, by = 1),
+    expand = expansion(mult = 0, add = 0.05)
+  ) +
+  scale_y_continuous(
+    breaks = seq(-3, 2, by = 1),
+    expand = expansion(mult = 0, add = 0.10)
+  ) +
+
+  coord_cartesian(xlim = XLIM, ylim = YLIM, clip = "on") +
+
   labs(
-    x = "Occupational Distance (Target Log-Wage − Source Log-Wage)",
-    y = "Linear Predictor (cloglog scale)"
+    x = "Signed log wage gap (target \u2212 source)",
+    y = "Linear predictor (cloglog scale)"
   ) +
-  theme_scd
 
-print(p)
+  theme_sciadv
 
-
-
-# ============================================================
-# ATC FIGURE: ASYMMETRIC STRUCTURE WITH DISCONTINUITY (2x3)
-# Version: English / Publication Ready
-# ============================================================
-
-library(data.table)
-library(ggplot2)
-library(sysfonts)
-library(showtext)
-
-# 1. Load fonts for robust symbol rendering
-font_add_google("Inconsolata", "inconsolata")
-font_add_google("Noto Sans", "noto")
-showtext_auto(TRUE)
-
-# 2. Define SCD Aesthetics
-theme_scd <- theme_minimal(base_size = 20) +
-  theme(
-    text = element_text(family = "inconsolata"),
-    strip.text = element_text(face = "bold", size = 15),
-    axis.title = element_text(size = 18),
-    axis.text = element_text(size = 14),
-    panel.border = element_rect(color = "black", linewidth = 0.8, fill = NA),
-    panel.grid.minor = element_blank(),
-    panel.spacing = unit(1.5, "lines"),
-    legend.position = "none",
-    plot.title = element_text(face = "bold", size = 22),
-    plot.subtitle = element_text(size = 16, color = "gray30")
-  )
-
-# Professional Palette
-cols_atc <- c(
-  "Socio-Cognitive (Medium Nestedness)" = "#5da5da", 
-  "Socio-Cognitive (High Nestedness)"   = "#1f3a63", 
-  "Physical (Low Nestedness / Terminal)" = "#d7263d"
+# -- Guardar ------------------------------------------------------------------
+# Ancho 10.5 in para acomodar 3 columnas de facetas;
+# verificar límites con el editor de Science Advances antes de enviar.
+ggsave(
+  file.path(out_figs, "fig_main_atc_nestedness.pdf"),
+  fig_nest, width = 10.5, height = 11.0, units = "in", device = cairo_pdf
 )
+message("  Guardado: figs/fig_main_atc_nestedness.pdf  [10.5 x 11.0 in]")
 
-# ----------------------------
-# Simulation Settings
-# ----------------------------
-xlim_use <- c(-2.0, 2.0)
-ylim_use <- c(-3.5, 2.5) 
-gap_visual <- 0.04       
-Dbar <- mean(dt$structural_distance, na.rm = TRUE)
-
-# ----------------------------
-# Coefficient Extractor
-# ----------------------------
-get_atc_params <- function(model, archetype) {
-  b <- coef(model)
-  suffix <- paste0("atc_archetype", archetype)
-  list(
-    b_up    = b[paste0("wage_up:", suffix)],
-    b_down  = b[paste0("wage_down:", suffix)],
-    b_dummy = b[paste0("up_dummy:", suffix)],
-    b_dist  = b[paste0("structural_distance:", suffix)]
-  )
-}
-
-# ----------------------------
-# Data Preparation
-# ----------------------------
-prepare_plot_data <- function(model, label) {
-  # Mapping Technical Names to Publication Labels
-  archetypes <- c("SC_Specialized", "SC_Scaffolding", "Physical_Terminal")
-  names(archetypes) <- c("Socio-Cognitive (Medium Nestedness)", 
-                         "Socio-Cognitive (High Nestedness)", 
-                         "Physical (Low Nestedness / Terminal)")
-  
-  lines_dt <- rbindlist(lapply(names(archetypes), function(pub_name) {
-    tech_name <- archetypes[pub_name]
-    p <- get_atc_params(model, tech_name)
-    
-    # Left Side (Downwards: x < 0)
-    left <- data.table(wage_gap = seq(xlim_use[1], -gap_visual, length.out = 100))
-    left[, y := p$b_down * wage_gap + p$b_dist * Dbar]
-    left[, side := "down"]
-    
-    # Right Side (Upwards: x > 0)
-    right <- data.table(wage_gap = seq(gap_visual, xlim_use[2], length.out = 100))
-    right[, y := p$b_up * wage_gap + p$b_dummy + p$b_dist * Dbar]
-    right[, side := "up"]
-    
-    dt_a <- rbind(left, right)
-    dt_a[, `:=`(archetype = pub_name, model_name = label, b_up = p$b_up, b_down = p$b_down, b_dummy = p$b_dummy)]
-    dt_a
-  }))
-  
-  jumps_dt <- rbindlist(lapply(names(archetypes), function(pub_name) {
-    tech_name <- archetypes[pub_name]
-    p <- get_atc_params(model, tech_name)
-    data.table(
-      archetype = pub_name, model_name = label,
-      x = 0,
-      y_start = p$b_dist * Dbar,
-      y_end   = p$b_dummy + p$b_dist * Dbar
-    )
-  }))
-  
-  list(lines = lines_dt, jumps = jumps_dt)
-}
-
-# Process Models
-data_A <- prepare_plot_data(m_fe_source_jump, "Panel A: FE(source + skill)")
-data_B <- prepare_plot_data(m_fe_target_jump, "Panel B: FE(target + skill)")
-
-all_lines <- rbind(data_A$lines, data_B$lines)
-all_jumps <- rbind(data_A$jumps, data_B$jumps)
-
-# Order Panels
-pub_levels <- c("Socio-Cognitive (Medium Nestedness)", "Socio-Cognitive (High Nestedness)", "Physical (Low Nestedness / Terminal)")
-all_lines[, archetype := factor(archetype, levels = pub_levels)]
-all_jumps[, archetype := factor(archetype, levels = pub_levels)]
-
-# ----------------------------
-# Robust Annotations (Unicode)
-# ----------------------------
-ann_data <- all_lines[, .(
-  lab = sprintf("\u03b2_up: %.2f\n\u03b2_dn: %.2f\n\u0394_0: %.2f", 
-                first(b_up), first(b_down), first(b_dummy))
-), by = .(model_name, archetype)]
-
-# ----------------------------
-# Final Visualization
-# ----------------------------
-p_final <- ggplot() +
-  geom_hline(yintercept = 0, linetype = "dotted", color = "gray70") +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "gray70") +
-  
-  # Slopes
-  geom_line(data = all_lines, 
-            aes(x = wage_gap, y = y, color = archetype, group = interaction(archetype, side)),
-            linewidth = 2.8, lineend = "butt") +
-  
-  # Vertical Barrier (The Jump)
-  geom_segment(data = all_jumps, 
-               aes(x = x, xend = x, y = y_start, yend = y_end, color = archetype),
-               linewidth = 1.6, linetype = "solid") +
-  
-  facet_grid(model_name ~ archetype) +
-  
-  # Text with Noto font for Symbols
-  geom_text(data = ann_data, 
-            aes(x = xlim_use[1] + 0.1, y = ylim_use[1] + 0.3, label = lab),
-            family = "noto", size = 4.2, hjust = 0, vjust = 0, color = "black", lineheight = 0.9) +
-  
-  scale_color_manual(values = cols_atc) +
-  coord_cartesian(xlim = xlim_use, ylim = ylim_use) +
-  labs(
-    x = "Occupational Wage Gap (Target - Source)",
-    y = "Linear Predictor (cloglog scale)"
-    #title = "Asymmetric Trajectory Channeling (ATC) and Vertical Barriers",
-    #subtitle = "Diffusion probability conditioned by structural position and wage directionality"
-  ) +
-  theme_scd
-
-print(p_final)
-
-# Save high-res for the paper
-#ggsave("fig_atc_publication_ready_EN.png", plot = p_final, width = 16, height = 9, dpi = 300)
+message("\n>>> 04_structural_models_nestedness.R completo.")
