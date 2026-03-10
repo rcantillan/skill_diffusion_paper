@@ -626,27 +626,43 @@ theme_sciadv_main <- theme_classic(base_size = PT_BASE, base_family = "Helvetica
     strip.text        = element_text(size = PT_STRIP, face = "plain"),
     strip.background  = element_blank(),
     axis.title        = element_text(size = PT_TITLE),
-    axis.text         = element_text(size = PT_BASE),
+    axis.text         = element_text(size = PT_BASE, colour = "grey10"),
     legend.title      = element_blank(),
     legend.text       = element_text(size = PT_BASE - 0.5),
     legend.position   = "bottom",
+    legend.background = element_rect(fill = "white", colour = NA),
+    panel.background  = element_rect(fill = "white", colour = NA),
+    plot.background   = element_rect(fill = "white", colour = NA),
     panel.border      = element_blank(),
     panel.grid        = element_blank(),
     axis.line         = element_line(linewidth = 0.35, colour = "grey20"),
     axis.ticks        = element_line(linewidth = 0.3, colour = "grey30"),
     axis.ticks.length = unit(2, "pt"),
-    plot.title        = element_text(size = PT_TITLE, face = "plain"),
+    plot.title        = element_text(size = PT_TITLE, face = "plain", colour = "grey10"),
     plot.margin       = margin(t = 6, r = 8, b = 6, l = 6, unit = "pt"),
     legend.key.width  = unit(0.9, "cm"),
-    legend.spacing.x  = unit(4, "pt")
+    legend.spacing.x  = unit(4, "pt"),
+    panel.spacing.x   = unit(10, "pt"),
+    panel.spacing.y   = unit(10, "pt")
   )
+
+# Compact annotations for Panel C: use only ONE line per facet
+ann_C_plot <- copy(panel_c_ann)
+ann_C_plot[, domain := factor(domain, levels = c("Cognitive", "Physical"))]
+ann_C_plot[, short_label := sprintf("RMSE: %.3f vs %.3f | Q5-Q1: %.3f vs %.3f",
+                                    rmse_ATC, rmse_NULL, atc_gap, null_gap)]
+
+ymax_C <- plot_C[, .(y_top = max(rate, na.rm = TRUE)), by = domain]
+ann_C_plot <- merge(ann_C_plot, ymax_C, by = "domain", all.x = TRUE)
+ann_C_plot[, x := 1.05]
+ann_C_plot[, y := y_top * 0.98]
 
 # Panel A ----------------------------------------------------
 pA <- ggplot(
   plot_A,
   aes(x = wage_quintile, y = r_obs, colour = domain, group = domain)
 ) +
-  geom_line(linewidth = 1.1) +
+  geom_line(linewidth = 1.1, lineend = "round") +
   geom_point(size = 2.8) +
   scale_colour_manual(values = PAL_DOMAIN, labels = DOMAIN_LABS) +
   scale_x_continuous(
@@ -660,7 +676,10 @@ pA <- ggplot(
     x = "Destination wage quintile",
     y = "Observed adoption rate"
   ) +
-  theme_sciadv_main
+  theme_sciadv_main +
+  theme(
+    legend.position = "none"
+  )
 
 # Panel B ----------------------------------------------------
 pB <- ggplot(
@@ -668,7 +687,7 @@ pB <- ggplot(
   aes(x = wage_quintile, y = ratio_obs)
 ) +
   geom_hline(yintercept = 1, linetype = "dashed", colour = "grey60", linewidth = 0.35) +
-  geom_line(linewidth = 1.1, colour = "black") +
+  geom_line(linewidth = 1.1, colour = "black", lineend = "round") +
   geom_point(size = 2.8, colour = "black") +
   scale_x_continuous(
     breaks = 1:5,
@@ -681,7 +700,10 @@ pB <- ggplot(
     x = "Destination wage quintile",
     y = "Cognitive / Physical ratio"
   ) +
-  theme_sciadv_main
+  theme_sciadv_main +
+  theme(
+    legend.position = "none"
+  )
 
 if (is.finite(cross_obs)) {
   pB <- pB +
@@ -691,8 +713,8 @@ if (is.finite(cross_obs)) {
       y = max(plot_B$ratio_obs, na.rm = TRUE),
       label = sprintf("Crossing \u2248 Q%.1f", cross_obs),
       family = "Helvetica",
-      size = 3.4,
-      vjust = -0.2,
+      size = 3.3,
+      vjust = -0.15,
       colour = "black"
     )
 }
@@ -702,25 +724,20 @@ pC <- ggplot(
   plot_C,
   aes(x = wage_quintile, y = rate, colour = series, linetype = series, group = series)
 ) +
-  geom_line(linewidth = 1.0) +
-  geom_point(size = 2.6) +
-  facet_wrap(~ domain, ncol = 2, labeller = labeller(domain = DOMAIN_LABS)) +
-  geom_text(
-    data = ann_C,
-    aes(x = x, y = y1, label = rmse_label),
-    inherit.aes = FALSE,
-    hjust = 0, vjust = 1,
-    family = "Helvetica",
-    size = 3.0,
-    colour = "grey20"
+  geom_line(linewidth = 1.0, lineend = "round") +
+  geom_point(size = 2.5) +
+  facet_wrap(
+    ~ domain,
+    ncol = 2,
+    labeller = labeller(domain = DOMAIN_LABS)
   ) +
   geom_text(
-    data = ann_C,
-    aes(x = x, y = y2, label = gap_label),
+    data = ann_C_plot,
+    aes(x = x, y = y, label = short_label),
     inherit.aes = FALSE,
     hjust = 0, vjust = 1,
     family = "Helvetica",
-    size = 3.0,
+    size = 2.9,
     colour = "grey20"
   ) +
   scale_colour_manual(values = PAL_MODEL) +
@@ -730,19 +747,22 @@ pC <- ggplot(
     labels = Q_LABS,
     expand = expansion(mult = c(0.03, 0.03))
   ) +
-  scale_y_continuous(expand = expansion(mult = c(0.05, 0.15))) +
+  scale_y_continuous(expand = expansion(mult = c(0.06, 0.18))) +
   labs(
     title = "(C) Observed versus model-implied adoption rates",
     x = "Destination wage quintile",
     y = "Adoption rate"
   ) +
-  theme_sciadv_main
+  theme_sciadv_main +
+  theme(
+    legend.position = "bottom"
+  )
 
 # Assemble ---------------------------------------------------
 fig_main <- pA / pB / pC +
-  plot_layout(heights = c(1.0, 0.95, 1.30), guides = "collect") &
+  plot_layout(heights = c(0.95, 0.90, 1.35), guides = "collect") &
   theme(
-    legend.position = "bottom",
+    legend.position  = "bottom",
     legend.direction = "horizontal"
   )
 
@@ -750,7 +770,7 @@ ggsave(
   filename = file.path(out_figs, "fig_atc_polarization_main.pdf"),
   plot = fig_main,
   width = 10.0,
-  height = 11.3,
+  height = 11.0,
   units = "in",
   device = cairo_pdf,
   bg = "white"
